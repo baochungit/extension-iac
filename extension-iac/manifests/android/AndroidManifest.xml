@@ -8,13 +8,14 @@
         <activity android:name="com.defold.iac.IACActivity"
             android:theme="@android:style/Theme.Translucent.NoTitleBar"
             android:launchMode="singleTask"
-            android:exported="false"
+            android:exported="true"
             android:configChanges="keyboardHidden|orientation|screenSize">
             <intent-filter>
-               <action android:name="android.intent.action.VIEW" />
-               <category android:name="android.intent.category.DEFAULT" />
-               <category android:name="android.intent.category.BROWSABLE" />
-               <data android:scheme="{{android.package}}" />
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="{{android.package}}" />
+                <data android:scheme="{{android.scheme}}" />
             </intent-filter>
         </activity>
 
