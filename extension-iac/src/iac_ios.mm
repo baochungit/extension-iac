@@ -16,101 +16,81 @@ struct IAC
     }
 
     void Clear() {
-        m_AppDelegate = 0;
+        m_SceneDelegate = 0;
         m_Listener = 0;
-        m_QueueCreated = false;
     }
     dmScript::LuaCallbackInfo*  m_Listener;
 
-    id<UIApplicationDelegate>   m_AppDelegate;
+    id<UISceneDelegate>   m_SceneDelegate;
 
     IACInvocation               m_StoredInvocation;
 
     IACCommandQueue             m_CmdQueue;
-    bool                        m_QueueCreated;
 } g_IAC;
 
-static void CreateQueue()
+
+static void QueueURL(NSURL* url, NSString* sourceApplication)
 {
-    if (!g_IAC.m_QueueCreated)
-    {
-        IAC_Queue_Create(&g_IAC.m_CmdQueue);
-        g_IAC.m_QueueCreated = true;
-    }
-}
-
-static void DestroyQueue()
-{
-    IAC_Queue_Destroy(&g_IAC.m_CmdQueue);
-    g_IAC.m_QueueCreated = false;
-}
-
-@interface IACAppDelegate : NSObject <UIApplicationDelegate>
-
-@end
-
-
-@implementation IACAppDelegate
-
--(BOOL) application:(UIApplication *)application openURL:(NSURL *)url sourceApplication:(NSString *)sourceApplication annotation:(id)annotation{
     const char* payload = [[url absoluteString] UTF8String];
+    if (!payload)
+        return;
+
     const char* origin = sourceApplication ? [sourceApplication UTF8String] : 0;
     IACCommand cmd;
     cmd.m_Command = IAC_INVOKE;
     cmd.m_Payload = strdup(payload);
     cmd.m_Origin = origin ? strdup(origin) : 0;
     IAC_Queue_Push(&g_IAC.m_CmdQueue, &cmd);
-
-    return YES;
 }
 
 
-- (BOOL)application:(UIApplication *)application willFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
-    // Handle invocations launching the app.
-    // willFinishLaunchingWithOptions is called prior to any scripts so we are garuanteed to have this information at any time set_listener is called!
-    const char* origin = 0;
-    const char* payload = 0;
+@interface IACSceneDelegate : NSObject <UISceneDelegate>
 
-    if (launchOptions[UIApplicationLaunchOptionsSourceApplicationKey]) {
-        origin = [[launchOptions valueForKey:UIApplicationLaunchOptionsSourceApplicationKey] UTF8String];
-    }
-    if (launchOptions[UIApplicationLaunchOptionsURLKey]) {
-        payload = [[[launchOptions valueForKey:UIApplicationLaunchOptionsURLKey] absoluteString] UTF8String];
-    }
+@end
 
-    IACCommand cmd;
-    cmd.m_Command = IAC_INVOKE;
-    cmd.m_Payload = payload ? strdup(payload) : 0;
-    cmd.m_Origin = origin ? strdup(origin) : 0;
 
-    if (payload != 0 || origin != 0)
-    {
-        CreateQueue(); // Create the queue if needed
-        IAC_Queue_Push(&g_IAC.m_CmdQueue, &cmd);
-    }
+@implementation IACSceneDelegate
 
-    // Return YES prevents OpenURL from being called, we need to do this as other extensions might and therefore internally handle OpenURL also being called.
-    return YES;
+- (void)scene:(UIScene*)scene openURLContexts:(NSSet<UIOpenURLContext*>*)contexts
+{
+    for (UIOpenURLContext* context in contexts)
+        QueueURL(context.URL, context.options.sourceApplication);
+}
+
+- (void)scene:(UIScene*)scene continueUserActivity:(NSUserActivity*)userActivity
+{
+    if ([userActivity.activityType isEqualToString:NSUserActivityTypeBrowsingWeb])
+        QueueURL(userActivity.webpageURL, nil);
+}
+
+- (void)scene:(UIScene*)scene willConnectToSession:(UISceneSession*)session options:(UISceneConnectionOptions*)options
+{
+    [self scene:scene openURLContexts:options.URLContexts];
+    for (NSUserActivity* userActivity in options.userActivities)
+        [self scene:scene continueUserActivity:userActivity];
 }
 
 @end
 
 
-
-struct IACAppDelegateRegister
+struct IACSceneDelegateRegister
 {
-    IACAppDelegateRegister() {
+    IACSceneDelegateRegister() {
         g_IAC.Clear();
-        g_IAC.m_AppDelegate = [[IACAppDelegate alloc] init];
-        dmExtension::RegisteriOSUIApplicationDelegate(g_IAC.m_AppDelegate);
+        // Scene connection can deliver links before Lua initialization. Keep the
+        // queue alive for as long as the registered observer can receive events.
+        IAC_Queue_Create(&g_IAC.m_CmdQueue);
+        g_IAC.m_SceneDelegate = [[IACSceneDelegate alloc] init];
+        dmExtension::RegisteriOSUISceneDelegate(g_IAC.m_SceneDelegate);
     }
-    ~IACAppDelegateRegister() {
-        dmExtension::UnregisteriOSUIApplicationDelegate(g_IAC.m_AppDelegate);
-        [g_IAC.m_AppDelegate release];
+    ~IACSceneDelegateRegister() {
+        dmExtension::UnregisteriOSUISceneDelegate(g_IAC.m_SceneDelegate);
+        [g_IAC.m_SceneDelegate release];
+        IAC_Queue_Destroy(&g_IAC.m_CmdQueue);
         g_IAC.Clear();
     }
 };
-IACAppDelegateRegister g_IACAppDelegateRegister;
+IACSceneDelegateRegister g_IACSceneDelegateRegister;
 
 
 static void OnInvocation(const char* payload, const char *origin)
@@ -177,20 +157,6 @@ static void HandleInvocation(const IACCommand* cmd)
 }
 
 
-dmExtension::Result AppInitializeIAC(dmExtension::AppParams* params)
-{
-    CreateQueue();
-    return dmExtension::RESULT_OK;
-}
-
-
-dmExtension::Result AppFinalizeIAC(dmExtension::AppParams* params)
-{
-    DestroyQueue();
-    return dmExtension::RESULT_OK;
-}
-
-
 dmExtension::Result InitializeIAC(dmExtension::Params* params)
 {
     return dmIAC::Initialize(params);
@@ -229,6 +195,6 @@ dmExtension::Result UpdateIAC(dmExtension::Params* params)
 }
 
 
-DM_DECLARE_EXTENSION(IACExt, "IAC", AppInitializeIAC, AppFinalizeIAC, InitializeIAC, UpdateIAC, 0, FinalizeIAC)
+DM_DECLARE_EXTENSION(IACExt, "IAC", 0, 0, InitializeIAC, UpdateIAC, 0, FinalizeIAC)
 
 #endif // DM_PLATFORM_IOS
